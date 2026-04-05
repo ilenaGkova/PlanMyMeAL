@@ -1,0 +1,13 @@
+# Perfect
+
+[theme]
+base = "light"
+backgroundColor = "#FBF7F0"
+textColor = "#2B1E16"
+secondaryBackgroundColor = "#FFFFFF"
+primaryColor = "#D19A28"
+[theme.sidebar]
+backgroundColor = "#EFE3D1"
+textColor = "#3A2418"
+secondaryBackgroundColor = "#DDC4A3"
+primaryColor = "#E6BC6A"

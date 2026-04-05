@@ -1,0 +1,14 @@
+# Good
+
+[theme]
+base = "dark"
+backgroundColor = "#0F0F14"
+textColor = "#EDEDF3"
+secondaryBackgroundColor = "#1A1A22"
+primaryColor = "#8B3DFF"
+
+[theme.sidebar]
+backgroundColor = "#0B0B10"
+textColor = "#F4F0FF"
+secondaryBackgroundColor = "#171720"
+primaryColor = "#A970FF"
