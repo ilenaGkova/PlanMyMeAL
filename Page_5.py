@@ -678,6 +678,14 @@ def show_existing_slot(entry, data, meal_type, counter: int):
             ],
             key=f"update_{entry['CodeID']}_{meal_type['CodeID']}"
         )
+        st.button(
+            "Remove Slot",
+            use_container_width=True,
+            on_click=remove_schedule_officially,
+            args=[data['CodeID'], data['UserID']],
+            key=f"remove_{entry['CodeID']}_{meal_type['CodeID']}"
+        )
+
 
     else:
         # Step 2c: Show locked meal name and allow the slot to be removed
