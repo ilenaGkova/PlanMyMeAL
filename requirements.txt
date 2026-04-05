@@ -1,1 +1,5 @@
-streamlit
+streamlit~=1.52.2
+pymongo[srv]~=4.6.3
+pytz~=2025.2
+pandas~=2.3.3
+plotly~=6.6.0
