@@ -13,6 +13,11 @@ from Page_6 import get_table
 from Rule import return_all_rules
 from Schedule import return_all_schedules, outcome_table_with_tags, update_schedule
 from User import validate_user
+import io
+from openpyxl import Workbook
+from collections import defaultdict
+from openpyxl.styles import Font, Alignment, PatternFill
+from openpyxl.utils import get_column_letter
 
 # Step 1: Initialize session state variables (first run only)
 
@@ -82,7 +87,7 @@ def page_5_layout():
                     )
 
                 # Step 6b: Show Rule Violations if they exist
-                table = find_errors(date_table)
+                table, excel_data, filename = find_errors(date_table)
                 if len(table) >= 1:
                     with st.container(border=True):
                         st.write(f'We see {len(table)} rule violations:')
@@ -114,7 +119,16 @@ def page_5_layout():
                         with cols[i]:
                             pointer = show_day(table[i], meal_types, pointer, add_slot, alter_slot)
 
-        # Step 8: Update schedule statuses based on the current date
+                # Step 9: Download Meal Plan
+                st.download_button(
+                    label="Download schedule file",
+                    data=excel_data,
+                    use_container_width=True,
+                    file_name=filename,
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+
+        # Step 9: Update schedule statuses based on the current date
         # If meals have passed, direct the user toward the accountability page.
         counter = update_statuses()
         if counter >= 1:
@@ -169,7 +183,8 @@ def generate_missing_days(date_table):
 def find_errors(date_table):
     # Step 1: Gather all linked data needed to check rule violations for the selected dates.
     categories, days, ingredient_ids_by_meal_id, ingredients, meal_types, meals, rules, schedules = gather_data(
-        date_table)
+        date_table
+    )
 
     # Step 2: Build one appearance table that tracks every rule-bearing CodeID and the dates it appears on.
     code_appearances = {}
@@ -187,6 +202,7 @@ def find_errors(date_table):
         date_by_day_id
     )
 
+    # Step 3: Build lookup tables for error processing and Excel export.
     item_table = {
         "MealType": {entry["CodeID"]: entry for entry in meal_types},
         "Meal": {entry["CodeID"]: entry for entry in meals},
@@ -194,8 +210,22 @@ def find_errors(date_table):
         "Ingredient": {entry["CodeID"]: entry for entry in ingredients}
     }
 
-    # Step 3: Build and return the final error table using the appearance data and rule data.
-    return build_error_table(code_appearances, item_table, {entry["CodeID"]: entry for entry in rules})
+    day_lookup = {entry["CodeID"]: entry for entry in days}
+    meal_type_lookup = {entry["CodeID"]: entry for entry in meal_types}
+    meal_lookup = {entry["CodeID"]: entry for entry in meals}
+
+    # Step 4: Build the Excel schedule export file.
+    excel_data, filename = build_schedule_export_file(
+        dates=date_table,
+        schedule_entries=schedules,
+        day_lookup=day_lookup,
+        meal_type_lookup=meal_type_lookup,
+        meal_lookup=meal_lookup
+    )
+
+    # Step 5: Build and return the final error table using the appearance data and rule data.
+    return build_error_table(code_appearances, item_table,
+                             {entry["CodeID"]: entry for entry in rules}), excel_data, filename
 
 
 def gather_data(date_table):
@@ -839,3 +869,212 @@ def update_statuses():
 
     # Step 4: Return the number of successfully updated schedules
     return counter
+
+
+def make_schedule_export_filename(dates):
+    """
+    dates: list of date strings or date objects
+    """
+
+    # Step 1: Handle empty input
+    if not dates:
+        return "schedule_export.xlsx"
+
+    # Step 2: Normalize dates to strings
+    dates = [str(d) for d in dates]
+
+    # Step 3: Build filename
+    if len(dates) == 1:
+        return f"schedule_{dates[0]}.xlsx"
+
+    return f"schedule_{dates[0]}_to_{dates[-1]}.xlsx"
+
+
+def group_schedule_data(schedule_entries, day_lookup, meal_type_lookup, meal_lookup, dates):
+    """
+    Returns:
+        sorted_meal_types: list of meal type dicts sorted by priority
+        planned_data: nested dict {meal_type_name: {date_str: "Meal A\\nMeal B"}}
+    """
+
+    # Step 1: Normalize date values once
+    date_strings = [str(d) for d in dates]
+
+    # Step 2: Collect every meal type used in the selected schedules
+    used_meal_type_ids = set()
+    for entry in schedule_entries:
+        day_data = day_lookup.get(entry.get("DayID"))
+        meal_type_id = entry.get("MealTypeID")
+
+        if not day_data or meal_type_id not in meal_type_lookup:
+            continue
+
+        date_value = str(day_data.get("Date"))
+        if date_value in date_strings:
+            used_meal_type_ids.add(meal_type_id)
+
+    # Step 3: Sort meal types by priority
+    sorted_meal_types = sorted(
+        [meal_type_lookup[m_id] for m_id in used_meal_type_ids],
+        key=lambda x: (x.get("Priority", 999999), x.get("Name", ""))
+    )
+
+    # Step 4: Build grouped meal names by meal type and date
+    grouped = defaultdict(lambda: defaultdict(list))
+
+    for entry in schedule_entries:
+        day_data = day_lookup.get(entry.get("DayID"))
+        meal_type_data = meal_type_lookup.get(entry.get("MealTypeID"))
+        meal_data = meal_lookup.get(entry.get("MealID"))
+
+        if not day_data or not meal_type_data or not meal_data:
+            continue
+
+        date_value = str(day_data.get("Date"))
+        if date_value not in date_strings:
+            continue
+
+        meal_type_name = meal_type_data.get("Name", "Unknown Meal Type")
+        meal_name = meal_data.get("Name", "Unknown Meal")
+
+        grouped[meal_type_name][date_value].append(meal_name)
+
+    # Step 5: Fill final table so every used meal type has every date column
+    planned_data = {}
+    for meal_type in sorted_meal_types:
+        meal_type_name = meal_type.get("Name", "Unknown Meal Type")
+        planned_data[meal_type_name] = {}
+
+        for date_value in date_strings:
+            meals = grouped[meal_type_name][date_value]
+            planned_data[meal_type_name][date_value] = "\n".join(meals) if meals else ""
+
+    return sorted_meal_types, planned_data
+
+
+def style_schedule_sheet(ws, total_date_columns, data_row_height=None):
+    # Step 1: Style header row
+    for cell in ws[1]:
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill(fill_type="solid", start_color="1F4E78", end_color="1F4E78")
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+
+    # Step 2: Style first column and optional row height
+    for row in range(2, ws.max_row + 1):
+        ws.cell(row=row, column=1).font = Font(bold=True)
+        ws.cell(row=row, column=1).fill = PatternFill(fill_type="solid", start_color="D9EAF7", end_color="D9EAF7")
+        ws.cell(row=row, column=1).alignment = Alignment(vertical="top", wrap_text=True)
+
+        if data_row_height is not None:
+            ws.row_dimensions[row].height = data_row_height
+
+    # Step 3: Set widths / wrapping / freeze panes
+    ws.column_dimensions["A"].width = 22
+
+    for col in range(2, total_date_columns + 2):
+        ws.column_dimensions[get_column_letter(col)].width = 25
+
+    for row in ws.iter_rows(min_row=2, max_row=ws.max_row, min_col=2, max_col=total_date_columns + 1):
+        for cell in row:
+            cell.alignment = Alignment(wrap_text=True, vertical="top")
+
+    ws.freeze_panes = "B2"
+
+
+def build_planned_sheet(ws, dates, sorted_meal_types, planned_data):
+    # Step 1: Add headers
+    headers = ["Meal Type"] + [str(d) for d in dates]
+    ws.append(headers)
+
+    # Step 2: Add planned schedule rows
+    for meal_type in sorted_meal_types:
+        meal_type_name = meal_type.get("Name", "Unknown Meal Type")
+        row = [meal_type_name]
+
+        for date_value in [str(d) for d in dates]:
+            row.append(planned_data[meal_type_name].get(date_value, ""))
+
+        ws.append(row)
+
+    # Step 3: Apply sheet styling
+    style_schedule_sheet(ws, len(dates))
+
+
+def build_actual_sheet(ws, dates, sorted_meal_types):
+    # Step 1: Add headers
+    headers = ["Meal Type"] + [str(d) for d in dates]
+    ws.append(headers)
+
+    # Step 2: Add blank rows for user input
+    for meal_type in sorted_meal_types:
+        meal_type_name = meal_type.get("Name", "Unknown Meal Type")
+        row = [meal_type_name] + ["" for _ in dates]
+        ws.append(row)
+
+    # Step 3: Apply sheet styling with taller rows for writing
+    style_schedule_sheet(ws, len(dates), data_row_height=60)
+
+
+def build_schedule_workbook(dates, schedule_entries, day_lookup, meal_type_lookup, meal_lookup):
+    """
+    day_lookup example:
+    {
+        "day_1": {"CodeID": "day_1", "Date": "2026-04-05"},
+        ...
+    }
+
+    meal_type_lookup example:
+    {
+        "mt_1": {"CodeID": "mt_1", "Name": "Breakfast", "Priority": 1},
+        "mt_2": {"CodeID": "mt_2", "Name": "Lunch", "Priority": 2},
+    }
+
+    meal_lookup example:
+    {
+        "meal_1": {"CodeID": "meal_1", "Name": "Eggs"},
+        "meal_2": {"CodeID": "meal_2", "Name": "Soup"},
+    }
+    """
+
+    # Step 1: Build grouped planned data
+    sorted_meal_types, planned_data = group_schedule_data(
+        schedule_entries=schedule_entries,
+        day_lookup=day_lookup,
+        meal_type_lookup=meal_type_lookup,
+        meal_lookup=meal_lookup,
+        dates=dates
+    )
+
+    # Step 2: Create workbook and sheets
+    wb = Workbook()
+
+    ws_planned = wb.active
+    ws_planned.title = "Planned Schedule"
+    build_planned_sheet(ws_planned, dates, sorted_meal_types, planned_data)
+
+    ws_actual = wb.create_sheet("Actual Intake")
+    build_actual_sheet(ws_actual, dates, sorted_meal_types)
+
+    # Step 3: Return workbook
+    return wb
+
+
+def build_schedule_export_file(dates, schedule_entries, day_lookup, meal_type_lookup, meal_lookup):
+    # Step 1: Build workbook
+    wb = build_schedule_workbook(
+        dates=dates,
+        schedule_entries=schedule_entries,
+        day_lookup=day_lookup,
+        meal_type_lookup=meal_type_lookup,
+        meal_lookup=meal_lookup
+    )
+
+    # Step 2: Build filename
+    filename = make_schedule_export_filename(dates)
+
+    # Step 3: Save to memory for download
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+
+    return output, filename

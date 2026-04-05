@@ -8,6 +8,12 @@ from Page_6 import get_table
 from Schedule import return_all_schedules
 from UnitType import validate_unit_type
 from User import validate_user
+import io
+from openpyxl import Workbook
+from openpyxl.styles import Font, Alignment, PatternFill
+from openpyxl.utils import get_column_letter
+from openpyxl.formatting.rule import FormulaRule
+
 
 # Step 1: Initialize session state variables (first run only)
 
@@ -64,12 +70,24 @@ def page_4_layout():
                         for entry in ingredient_table:
                             st.write(f"🛒 {entry['Quantity']} {entry['Unit']}(s) of {entry['Name']}")
 
+                # Step 6: Make exel file of ingredient table
+                excel_data, filename = build_ingredient_export_file(ingredient_table, date_table)
+
+                # Step 6a: Download exel file at will
+                st.download_button(
+                    label="Download ingredient list",
+                    data=excel_data,
+                    use_container_width=True,
+                    file_name=filename,
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+
             else:
 
                 st.write('You have no meals planed for this duration of time')
 
     else:
-        # Step 5: Handle validation failure
+        # Step 7: Handle validation failure
         # Store error for global error display system
         st.session_state.error, st.session_state.error_status = message, status
 
@@ -155,3 +173,117 @@ def add_to_table(table, entry: str, quantity: float, item: str):
     # Step 5: Add new entry to table
     table.append(new_row)
     return table
+
+
+def make_export_filename(dates):
+    """
+    dates: list of date strings or date objects
+    """
+
+    # Step 1: Handle empty input (fallback filename)
+    if not dates:
+        return "ingredients_export.xlsx"
+
+    # Step 2: Normalize dates to strings
+    dates = [str(d) for d in dates]
+
+    # Step 3: Build filename based on number of dates
+    if len(dates) == 1:
+        return f"ingredients_{dates[0]}.xlsx"
+
+    return f"ingredients_{dates[0]}_to_{dates[-1]}.xlsx"
+
+
+def build_ingredient_workbook(ingredient_rows):
+    """
+    ingredient_rows: list of dicts like
+    {
+        'CodeID': entry,
+        'Quantity': quantity,
+        'Name': ingredient_name,
+        'Unit': unit
+    }
+    """
+
+    # Step 1: Create workbook and set up sheet + headers
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Ingredients"
+
+    headers = ["Ingredient", "Quantity", "Unit", "Existing", "Outcome"]
+    ws.append(headers)
+
+    # Style header row
+    for cell in ws[1]:
+        cell.font = Font(bold=True)
+        cell.alignment = Alignment(horizontal="center")
+
+    # Step 2: Fill rows with data + formulas
+    row_num = 2
+    for item in ingredient_rows:
+        ws.cell(row=row_num, column=1, value=item.get("Name"))
+        ws.cell(row=row_num, column=2, value=item.get("Quantity"))
+        ws.cell(row=row_num, column=3, value=item.get("Unit"))
+        ws.cell(row=row_num, column=4, value=None)  # Existing stays blank
+        ws.cell(row=row_num, column=5, value=f"=D{row_num}-B{row_num}")  # Outcome
+        row_num += 1
+
+    # Step 3: Format sheet
+    widths = {
+        1: 30,
+        2: 12,
+        3: 12,
+        4: 12,
+        5: 12,
+    }
+
+    for col_idx, width in widths.items():
+        ws.column_dimensions[get_column_letter(col_idx)].width = width
+
+    ws.freeze_panes = "A2"
+
+    # Optional alignment for data rows
+    for row in ws.iter_rows(min_row=2, max_row=ws.max_row, min_col=2, max_col=5):
+        for cell in row:
+            cell.alignment = Alignment(horizontal="center")
+
+    # Conditional formatting for full row
+    if ingredient_rows:
+        last_row = len(ingredient_rows) + 1
+        full_range = f"A2:E{last_row}"
+
+        red_fill = PatternFill(fill_type="solid", start_color="FFC7CE", end_color="FFC7CE")
+        yellow_fill = PatternFill(fill_type="solid", start_color="FFF2CC", end_color="FFF2CC")
+
+        ws.conditional_formatting.add(
+            full_range,
+            FormulaRule(
+                formula=["$E2<0"],
+                fill=red_fill
+            )
+        )
+
+        ws.conditional_formatting.add(
+            full_range,
+            FormulaRule(
+                formula=["$E2=0"],
+                fill=yellow_fill
+            )
+        )
+
+    return wb
+
+
+def build_ingredient_export_file(ingredient_rows, dates):
+    # Step 1: Build the Excel workbook
+    wb = build_ingredient_workbook(ingredient_rows)
+
+    # Step 2: Generate the export filename
+    filename = make_export_filename(dates)
+
+    # Step 3: Save workbook to in-memory file (for download)
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+
+    return output, filename

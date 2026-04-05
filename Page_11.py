@@ -1,16 +1,20 @@
 import streamlit as st
 from AdministrativeFunctions import change_page
-from Category import category_codeID_label, select_categoryID
+from Category import category_codeID_label, select_categoryID, return_all_categories
 from General_Functions import search_by_button, return_table, build_query, create_entry_user
-from Ingredient import validate_ingredient_deep, get_ingredients_not_in_meal
+from Ingredient import validate_ingredient_deep, get_ingredients_not_in_meal, return_all_ingredients
 from Meal import collection_name, return_all_meals, meal_codeID_label, meal_createdAt_label, meal_name_label, make_meal, \
     full_entry_meal, update_meal, meal_notes_label, validate_meal, create_meal, delete_meal
 from MealCombination import update_meal_combination, delete_meal_combination, create_meal_combination, \
     return_all_meal_combinations, meal_combination_quantity_label, validate_combination
 from Menu import menu
 from MongoDB_General_Functions import role_table
-from Rule import rule_codeID_label, select_ruleID
+from Rule import rule_codeID_label, select_ruleID, return_all_rules
+from UnitType import return_all_unit_types
 from User import validate_user, user_collection_name, user_codeID_label
+import io
+from docx import Document
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 # Step 1: Initialize session state variables (first run only)
 # Step 1a: Track the current page number
@@ -453,19 +457,242 @@ def manage_meals():
                                            ["Add", "Show All"], False), collection_name, "Name",
                               "Search")
 
-    # Step 5c: Display all meals if the user selects "Show All"
     if option == "Show All":
+
+        # Step 5d: Make and download cookbook word file
+        cookbook = make_cookbook(entries)
+        cookbook = sorted(cookbook, key=lambda x: (x.get("Title") or "").lower())
+        docx_file = build_cookbook_docx(cookbook)
+        st.download_button(
+            label="Download Cookbook",
+            data=docx_file,
+            use_container_width=True,
+            file_name="my_cookbook.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        )
+
+        # Step 5c: Display all meals if the user selects "Show All"
         display_results(entries)
 
-    # Step 5d: Start the meal creation workflow if the user selects "Add"
+    # Step 5e: Start the meal creation workflow if the user selects "Add"
     elif option == "Add":
         add_meal()
 
-    # Step 5e: Retrieve the selected meal and allow modification or removal
     else:
+        # Step 5f: Retrieve the selected meal and allow modification or removal
         meal_entry = return_all_meals({"UserID": st.session_state.current_user, "Name": option})
 
-        # Step 5f: Ensure the selected meal exists before altering or removing it
         if len(meal_entry) >= 1:
+
+            # Step 5g: Make and download cookbook word file
+            cookbook = make_cookbook(meal_entry)
+            docx_file = build_cookbook_docx(cookbook)
+            st.download_button(
+                label=f"Download {meal_entry[0]['Name']}",
+                data=docx_file,
+                use_container_width=True,
+                file_name="my_cookbook.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            )
+
+            # Step 5h: Ensure the selected meal exists before altering or removing it
             alter_meal(meal_entry[0], meal_entry)
             remove_meal(meal_entry[0], meal_entry)
+
+
+def make_cookbook(entries):
+    # Step 1: Validate user once and get username for "CreatedBy"
+    message, user, status = validate_user(st.session_state.current_user)
+    if not status:
+        return []
+
+    created_by = user[0]["Username"]
+
+    # Step 2: Extract all MealIDs from incoming entries
+    # These are used to fetch all related data in bulk (instead of per-entry calls)
+    meal_ids = [entry["CodeID"] for entry in entries if entry.get("CodeID")]
+    if not meal_ids:
+        return []
+
+    # Step 3: Fetch all meals in one query and build lookup
+    meals = return_all_meals({
+        "CodeID": {"$in": meal_ids},
+        "UserID": st.session_state.current_user
+    })
+    meal_lookup = {meal["CodeID"]: meal for meal in meals}
+
+    # Step 4: Collect all CategoryIDs and RuleIDs from meals
+    # These will be used for batch fetching
+    category_ids = list({
+        meal["CategoryID"]
+        for meal in meals
+        if meal.get("CategoryID") is not None
+    })
+
+    rule_ids = list({
+        meal["RuleID"]
+        for meal in meals
+        if meal.get("RuleID") is not None
+    })
+
+    # Step 5: Fetch categories and build lookup
+    categories = return_all_categories({
+        "CodeID": {"$in": category_ids}
+    }) if category_ids else []
+    category_lookup = {category["CodeID"]: category for category in categories}
+
+    # Step 6: Fetch rules and build lookup
+    rules = return_all_rules({
+        "CodeID": {"$in": rule_ids}
+    }) if rule_ids else []
+    rule_lookup = {rule["CodeID"]: rule for rule in rules}
+
+    # Step 7: Fetch all meal combinations (ingredient links) in one query
+    meal_combinations = return_all_meal_combinations({
+        "MealID": {"$in": meal_ids},
+        "UserID": st.session_state.current_user
+    })
+
+    # Step 8: Organize combinations by MealID and collect all IngredientIDs
+    combinations_by_meal_id = {}
+    ingredient_ids = set()
+
+    for combo in meal_combinations:
+        meal_id = combo.get("MealID")
+        ingredient_id = combo.get("IngredientID")
+
+        if meal_id is not None:
+            combinations_by_meal_id.setdefault(meal_id, []).append(combo)
+
+        if ingredient_id is not None:
+            ingredient_ids.add(ingredient_id)
+
+    # Step 9: Fetch all ingredients in one query and build lookup
+    ingredients = return_all_ingredients({
+        "CodeID": {"$in": list(ingredient_ids)}
+    }) if ingredient_ids else []
+    ingredient_lookup = {ingredient["CodeID"]: ingredient for ingredient in ingredients}
+
+    # Step 10: Collect UnitTypeIDs from ingredients and fetch them
+    unit_type_ids = list({
+        ingredient["UnitTypeID"]
+        for ingredient in ingredients
+        if ingredient.get("UnitTypeID") is not None
+    })
+
+    units = return_all_unit_types({
+        "CodeID": {"$in": unit_type_ids}
+    }) if unit_type_ids else []
+    unit_lookup = {unit["CodeID"]: unit for unit in units}
+
+    # Step 11: Build the final cookbook structure
+    cookbook = []
+
+    for entry in entries:
+        meal_id = entry.get("CodeID")
+        meal = meal_lookup.get(meal_id)
+
+        # Step 11.1: Skip if meal is missing
+        if not meal:
+            continue
+
+        # Step 11.2: Resolve category and rule (if they exist)
+        category = category_lookup.get(meal.get("CategoryID"))
+        rule = rule_lookup.get(meal.get("RuleID"))
+
+        # Step 11.3: Format rule text (e.g. "2 per week")
+        rule_text = None
+        if rule:
+            quantity = rule.get("Quantity")
+            per = rule.get("Per")
+            if quantity is not None and per:
+                rule_text = f"{quantity} per {per}"
+
+        # Step 11.4: Build ingredient list for this meal
+        ingredients_list = []
+
+        for combo in combinations_by_meal_id.get(meal_id, []):
+            ingredient = ingredient_lookup.get(combo.get("IngredientID"))
+            if not ingredient:
+                continue
+
+            unit = unit_lookup.get(ingredient.get("UnitTypeID"))
+            if not unit:
+                continue
+
+            ingredients_list.append({
+                "Ingredient": ingredient.get("Name"),
+                "Quantity": combo.get("Quantity"),
+                "UnitType": unit.get("Name")
+            })
+
+        # Step 11.5: Assemble final cookbook row
+        cookbook.append({
+            "Title": meal.get("Name"),
+            "Category": category.get("Name") if category else None,
+            "Created": meal.get("CreatedAt"),
+            "CreatedBy": created_by,
+            "Rule": rule_text,
+            "Ingredients": ingredients_list,
+            "Notes": meal.get("Notes")
+        })
+
+    # Step 12: Return final cookbook and error counter
+    return cookbook
+
+
+def build_cookbook_docx(cookbook):
+    # Step 1: Create document
+    document = Document()
+
+    # Step 2: Add title page
+    title = document.add_heading("My Cookbook", level=0)
+    title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+    document.add_paragraph("")  # spacing
+
+    # Step 3: Loop through recipes
+    for index, meal in enumerate(cookbook):
+        # Step 3.1: Meal title
+        document.add_heading(meal.get("Title", "Unnamed Meal"), level=1)
+
+        # Step 3.2: Metadata (Category, Created, Rule)
+        if meal.get("Category"):
+            document.add_paragraph(f"Category: {meal['Category']}")
+
+        if meal.get("Created"):
+            document.add_paragraph(f"Created: {meal['Created']}")
+
+        if meal.get("CreatedBy"):
+            document.add_paragraph(f"By: {meal['CreatedBy']}")
+
+        if meal.get("Rule"):
+            document.add_paragraph(f"Rule: {meal['Rule']}")
+
+        # Step 3.3: Ingredients section
+        document.add_heading("Ingredients", level=2)
+
+        ingredients = meal.get("Ingredients", [])
+        if ingredients:
+            for ing in ingredients:
+                text = f"{ing.get('Quantity', '')} {ing.get('UnitType', '')} {ing.get('Ingredient', '')}"
+                document.add_paragraph(text.strip(), style="List Bullet")
+        else:
+            document.add_paragraph("—")
+
+        # Step 3.4: Notes section
+        document.add_heading("Notes", level=2)
+
+        notes = meal.get("Notes")
+        document.add_paragraph(notes if notes else "—")
+
+        # Step 3.5: Page break between meals (not after last)
+        if index < len(cookbook) - 1:
+            document.add_page_break()
+
+    # Step 4: Save to memory (for Streamlit download)
+    output = io.BytesIO()
+    document.save(output)
+    output.seek(0)
+
+    return output
