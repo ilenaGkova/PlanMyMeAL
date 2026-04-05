@@ -212,7 +212,7 @@ def alter_user(entry, entries):
 
             if entry['Role'] == role_table["Plain User"] and status:
                 st.button(
-                    f"Make {codeID} {role_table["Administrator"]}",
+                    f"Make {codeID} {role_table['Administrator']}",
                     use_container_width=True,
                     on_click=alter_user_officially,
                     args=[entry['CodeID'], entry[0]['Username'], st.session_state.current_user, status,
