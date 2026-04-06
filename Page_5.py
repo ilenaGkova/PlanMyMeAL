@@ -1020,6 +1020,9 @@ def build_actual_sheet(ws, dates, sorted_meal_types):
         ws.append(row)
 
     # Step 3: Apply sheet styling with taller rows for writing
+    table = ["Weight", "Sleep", "Activity", "Alcohol"]
+    for entry in table:
+        ws.append([entry])
     style_schedule_sheet(ws, len(dates), data_row_height=60)
 
 
