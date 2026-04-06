@@ -166,7 +166,7 @@ def get_table():
 
         # Step 4: Ask the user for the end date.
         with column_to:
-            to_date = st.date_input("End Date", min_value=from_date)
+            to_date = st.date_input("End Date", min_value=from_date+timedelta(days=1))
 
         # Step 5: Only build the table if the user explicitly asks to show it.
         show_result = st.checkbox("Show Result")
