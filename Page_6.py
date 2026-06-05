@@ -306,7 +306,7 @@ def present_stats(stats_table):
             make_shape(stats_table)
 
             # Step 4: Let the user choose whether to see the day-by-day breakdown.
-            show_full = st.checkbox("Show Day by Day distribution")
+            show_full = st.checkbox("Show Day by Day Distribution")
 
         with information:
             # Step 6: Show the number of actual day rows included.

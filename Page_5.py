@@ -1023,7 +1023,7 @@ def build_actual_sheet(ws, dates, sorted_meal_types):
     table = ["Weight", "Sleep", "Activity", "Alcohol"]
     for entry in table:
         ws.append([entry])
-    style_schedule_sheet(ws, len(dates), data_row_height=60)
+    style_schedule_sheet(ws, len(dates), data_row_height=100)
 
 
 def build_schedule_workbook(dates, schedule_entries, day_lookup, meal_type_lookup, meal_lookup):
