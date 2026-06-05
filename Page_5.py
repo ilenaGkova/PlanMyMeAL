@@ -16,7 +16,7 @@ from User import validate_user
 import io
 from openpyxl import Workbook
 from collections import defaultdict
-from openpyxl.styles import Font, Alignment, PatternFill
+from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from openpyxl.utils import get_column_letter
 
 # Step 1: Initialize session state variables (first run only)
@@ -969,9 +969,16 @@ def style_schedule_sheet(ws, total_date_columns, data_row_height=None):
 
     # Step 2: Style first column and optional row height
     for row in range(2, ws.max_row + 1):
-        ws.cell(row=row, column=1).font = Font(bold=True)
+        ws.cell(row=row, column=1).font = Font(bold=True, size=16)
         ws.cell(row=row, column=1).fill = PatternFill(fill_type="solid", start_color="D9EAF7", end_color="D9EAF7")
         ws.cell(row=row, column=1).alignment = Alignment(vertical="top", wrap_text=True)
+        ws.cell.border = Border(
+            left=Side(style="thin", color="000000"),
+            right=Side(style="thin", color="000000"),
+            top=Side(style="thin", color="000000"),
+            bottom=Side(style="thin", color="000000")
+        )
+
 
         if data_row_height is not None:
             ws.row_dimensions[row].height = data_row_height
